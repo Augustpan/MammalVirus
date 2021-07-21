@@ -1,15 +1,57 @@
 library(tidyverse)
+library(vegan)
+library(ggsci)
 
-path_to_virus_list = function() {
-  "data/mammal_virus_list.csv"
+getPathToVirusList = function() { "data/mammal_virus_list.csv" }
+getPathToHostList = function() { "data/host_occurence.csv" }
+getPathToHostInfo = function() { "data/host_metadata.csv" }
+
+# merge host_list and host_info tables and transform into site-by-species table
+buildHostCommunityTable = function(host_list, host_info) {
+  host_merged = inner_join(host_info, host_list, by = "Mammal_species")
+  host_comm = host_merged %>%
+    select(Jingmen, Longquan, Wenzhou, Wufeng) %>%
+    t()
+  colnames(host_comm) = host_merged$Mammal_species
+  host_comm
 }
 
-read_virus_list = function(filename) {
-  read_csv(filename)
+calcHostAlphaDiversity = function(host_comm, host_info, host, method, nsample=1) {
+  if (host == "all") { 
+    host_filter = host_info$Mammal_species 
+  } else { 
+    filter(host_info, Mammal==host)$Mammal_species
+  }
+
+  sample_specnum = matrix(nrow=nsample, ncol=4)
+  for (i in 1:nsample) {
+    tmp = host_comm %>%
+      rrarefy(620) %>%
+      as_tibble() %>%
+      select(all_of(host_filter)) %>%
+      method()
+    sample_specnum[i,] = tmp
+  }
+  colnames(sample_specnum) = rownames(host_comm)
+  
+  tb_specnum = sample_specnum %>%
+    t() %>%
+    as.data.frame() %>%
+    mutate(site_name = rownames(.)) %>%
+    pivot_longer(cols = 1:nsample, names_to="nsample")
 }
 
-# 病毒器官嗜性CA图
-create_plot_ca_organophilism = function(virus_list) {
+createPlotHostAlphaDiversity = function(tb_specnum) {
+  ggplot(tb_specnum) + 
+    geom_bar(aes(x=site_name, y=value, fill=site_name), stat = "identity") +
+    scale_fill_uchicago() +
+    theme(axis.text.x = element_text(angle=45, vjust=1, hjust=1)) + 
+    ylab("Host Richness") + 
+    xlab("")
+}
+
+# CA plot of viral organophilism
+createPlotCaOrganophilism = function(virus_list) {
   virus_list %>%
     select(c("lung_Abundance",
              "liver_Abundance",
@@ -19,24 +61,3 @@ create_plot_ca_organophilism = function(virus_list) {
     vegan::cca() %>%
     plot()
 }
-
-"Viral_Family"
-"Viral_Genus"
-"Mammal"
-"Host_Name"
-
-file_virus_list = path_to_virus_list()
-tb_virus_list = read_virus_list(file_virus_list)
-
-ca = tb_virus_list %>%
-  select(c("lung_Abundance",
-           "liver_Abundance",
-           "spleen_Abundance",
-           "kindey_Abundance",
-           "feces_Abundance")) %>%
-  vegan::cca()
-
-ggplot() + 
-  geom_point(aes(x=ca$CA$u[,1], y=ca$CA$u[,2], color=tb_virus_list$Viral_Family)) + 
-  geom_segment(aes(x=0,y=0,xend=ca$CA$v[,1], yend=ca$CA$v[,2],),arrow=arrow()) + 
-  geom_text(aes(x=ca$CA$v[,1], y=ca$CA$v[,2], label=rownames(ca$CA$v)))
