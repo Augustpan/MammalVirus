@@ -46,12 +46,13 @@ calc_alpha_div = function(host, method, tit, nsample = 20) {
   }
   print(sample_specnum)
   colnames(sample_specnum) = c("Jingmen", "Longquan", "Wenzhou", "Wufeng")
+  rownames(sample_specnum) = 1:nsample
   
   df_specnum = sample_specnum %>%
     t() %>%
     as.data.frame() %>%
     mutate(site_name = rownames(.)) %>%
-    pivot_longer(cols = 1:nsample, names_to="nsample")
+    pivot_longer(cols = 1:nsample, names_to="sample", values_to="Ri")
   
   ggplot(df_specnum) + 
     geom_bar(aes(x=site_name, y=value, fill=site_name), stat = "identity") +
