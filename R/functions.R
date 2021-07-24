@@ -8,6 +8,8 @@ getPathToVirusList = function() { "data/mammal_virus_list.csv" }
 getPathToHostList = function() { "data/host_occurence.csv" }
 getPathToHostInfo = function() { "data/host_metadata.csv" }
 
+getPathToAnnotatedVirusList = function() { "data/mammal_virus_list_annotated.csv" }
+
 calcHostAlphaDiversity = function(host_list, host_info, method=specnumber, nsample=1) {
   host_merged = inner_join(host_info, host_list, by = "Mammal_species")
   host_comm = host_merged %>%
@@ -104,24 +106,31 @@ createPlotCAVirusOrganophilism = function(virus_list) {
   v = ca_op$CA$v
   lb = c("Lung", "Liver", "Spleen", "Kidney", "Feces")
   lst = c("Arena_Mammarenavirus@Wenzhou mammarenavirus",
-  "Paramyxo_Henipavirus@Novel henipavirus 1",
-  "Flavi_Hepacivirus@Novel hepacivirus 3",
-  "Hanta_Orthohantavirus@Seoul orthohantavirus",
-  "Hanta_Orthohantavirus@Hantaan orthohantavirus",
-  "Paramyxo_Jeilongvirus@Novel jeilongvirus 3",
-  "Paramyxo_Jeilongvirus@Beilong jeilongvirus",
-  "Flavi_Hepacivirus@Novel hepacivirus 2",
-  "Flavi_Pegivirus@Novel pegivirus 2",
-  "Flavi_Pegivirus@Novel pegivirus 3",
-  "Flavi_Pegivirus@Novel pegivirus 1")
+    "Paramyxo_Henipavirus@Novel henipavirus 1",
+    "Flavi_Hepacivirus@Novel hepacivirus 3",
+    "Hanta_Orthohantavirus@Seoul orthohantavirus",
+    "Hanta_Orthohantavirus@Hantaan orthohantavirus",
+    "Paramyxo_Jeilongvirus@Novel jeilongvirus 3",
+    "Paramyxo_Jeilongvirus@Beilong jeilongvirus",
+    "Flavi_Hepacivirus@Novel hepacivirus 2",
+    "Flavi_Pegivirus@Novel pegivirus 2",
+    "Flavi_Pegivirus@Novel pegivirus 3",
+    "Flavi_Pegivirus@Novel pegivirus 1")
   dft = filter(virus_list, Viral_Family_Genus_Species %in% lst)
   ggplot() +
-    geom_point(aes(x=u[,1], y=u[,2], color=virus_list$Viral_Family)) +
-    geom_point(aes(x=u[dft$`No.`,1], y=u[dft$`No.`,2], size=2)) +
-    stat_ellipse(aes(x=u[,1], y=u[,2] ,color=virus_list$Viral_Family)) + 
+    geom_point(aes(x=u[,1], y=u[,2], color=virus_list$Viral_Family), size=3) +
+    geom_point(aes(x=u[dft$`No.`,1], y=u[dft$`No.`,2]), shape=2, size=5) +
+    #stat_ellipse(aes(x=u[,1], y=u[,2] ,color=virus_list$Viral_Family)) + 
+    #geom_convexhull(aes(x=u[,1], y=u[,2], color=virus_list$Viral_Family, fill=NULL), alpha=0) + 
     geom_segment(aes(x=0, y=0, xend=v[,1], yend=v[,2]), arrow=arrow()) +
-    geom_text(aes(x=v[,1], y=v[,2], label=lb))
-    #geom_convexhull(aes(x=u[,1], y=u[,2], color=virus_list$Viral_Family, fill=NULL), alpha=0)
+    geom_text(aes(x=v[,1], y=v[,2], label=lb)) +
+    xlab("CA Axis1 (44.73%)") + 
+    ylab("CA Axis2 (25.36%)") +
+    theme_bw() + 
+    theme(axis.title = element_text(size=14, face="bold"),
+          axis.text = element_text(size=12),
+          legend.text = element_text(size=12))
+  
   
   lst_op = list(
     lung = filter(virus_list, lung_Abundance > 0)$Viral_Family_Genus_Species,
@@ -130,5 +139,39 @@ createPlotCAVirusOrganophilism = function(virus_list) {
     kidney = filter(virus_list, kindey_Abundance > 0)$Viral_Family_Genus_Species,
     feces = filter(virus_list, feces_Abundance > 0)$Viral_Family_Genus_Species
   )
+  upset(fromList(lst_op))
 
+}
+
+performPERMANOVAVirusOp = function(virus_list) {
+  col_names = c("lung_Abundance",
+                "liver_Abundance",
+                "spleen_Abundance",
+                "kindey_Abundance",
+                "feces_Abundance")
+  vtable = virus_list %>%
+    select(all_of(col_names), Viral_Family_Genus_Species, Host_Name) %>%
+    pivot_longer(cols=col_names, names_to="organ") %>%
+    pivot_wider(names_from=Viral_Family_Genus_Species, values_from=value, values_fill=0)
+  Y = vtable[3:ncol(vtable)]
+  perm <- how(nperm = 999, blocks = vtable$Host_Name)
+  adonis2(Y~organ, data=vtable, method="jaccard", permutations = perm)
+  
+}
+
+summariseVirusAnnotation = function(virus_list) {
+  list(
+    novelty = virus_list %>%
+      group_by(Novelty) %>%
+      summarise(nov = n()),
+    genome = virus_list %>%
+      group_by(Genome_type) %>%
+      summarise(gen = n()),
+    host = virus_list %>%
+      group_by(Host_type) %>%
+      summarise(hos = n()),
+    zoonosis = virus_list %>%
+      group_by(Zoonosis) %>%
+      summarise(zoo = n())
+  )
 }
