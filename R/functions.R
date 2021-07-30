@@ -3,12 +3,192 @@ library(vegan)
 library(ggsci)
 library(scatterpie)
 library(ggConvexHull)
+library(UpSetR)
+library(ape)
+library(Matrix)
 
 getPathToVirusList = function() { "data/mammal_virus_list.csv" }
 getPathToHostList = function() { "data/host_occurence.csv" }
 getPathToHostInfo = function() { "data/host_metadata.csv" }
+getPathToHostSpeciesTree = function() { "data/host_phylo_tree.nwk" }
+getPathToHostOrderTree = function() { "data/host_order.nwk" }
+getPathToVirusSegment = function() { "data/segment.tsv" }
+getPathToVirusFamPreMat = function() { "data/virusFamPrecisionMat.rds" }
+getPathToHostOrdPreMat = function() { "data/hostOrdPrecisionMat.rds" }
+getPathToSeqStat = function() { "data/lib_seq_stat.csv" }
 
-getPathToAnnotatedVirusList = function() { "data/mammal_virus_list_annotated.csv" }
+cleanVirusList = function(virus_list, virus_segment) {
+  sp = str_split(virus_list$Host_Name, " ", simplify = TRUE)
+  
+  # standardize some column names
+  virus_list$Site_Name = sp[,1]
+  virus_list$Host_Species = paste0(sp[,2], "_", sp[,3])
+  virus_list$Virus_Species = virus_list$Viral_Family_Genus_Species
+  
+  # find out the viruses that were found in multiple host species
+  multi_host_virus = virus_list %>%
+    select(Virus_Species, Host_Species) %>%
+    distinct() %>%
+    count(Virus_Species) %>%
+    filter(n > 1) %>%
+    `$`(Virus_Species)
+  
+  # select and rename columns, joining segmentation info
+  virus_list = virus_list %>%
+    select(
+      Site_Name, 
+      Viral_Family, Viral_Genus, Virus_Species, 
+      Host_Order=Mammal, Host_Species,
+      Genome_Type = Genome_type,
+      Novelty, Zoonosis,
+      Lung_Abundance = lung_Abundance,
+      Kidney_Abundance = kindey_Abundance,
+      Liver_Abundance = liver_Abundance,
+      Feces_Abundance = feces_Abundance,
+      Spleen_Abundance = spleen_Abundance,
+      Total_Abundance) %>%
+    left_join(virus_segment, by="Viral_Family") %>%
+    mutate(Multi_Host = Virus_Species %in% multi_host_virus)
+  
+  # rename Order of host species
+  f1 = virus_list$Host_Order == "shrews"
+  f2 = virus_list$Host_Order == "bats"
+  f3 = virus_list$Host_Order == "rodents"
+  virus_list$Host_Order[f1] = "Insectivora"
+  virus_list$Host_Order[f2] = "Chiroptera"
+  virus_list$Host_Order[f3] = "Rodentia"
+
+  # drop viral Family that there is not enough replications
+  to_drop = c("Adenoviridae", "Anelloviridae", "Arteriviridae", "Circoviridae", "Matonaviridae")
+  virus_list = filter(virus_list, !(Viral_Family %in% to_drop))
+  
+  # viral richness within host population
+  pop_viral_richness = virus_list %>% count(Site_Name, Host_Order, Host_Species, name="Population_Viral_Richness")
+  
+  # viral richness within a sample site (or a host community)
+  com_viral_richness = virus_list %>% 
+    count(Site_Name, Host_Species, Virus_Species) %>%
+    select(-Host_Species) %>%
+    distinct() %>%
+    count(Site_Name, name="Region_Viral_Richness")
+  
+  # host richness within a sample site
+  com_host_richness = tibble(
+    Site_Name = c("Longquan","Wufeng","Wenzhou","Jingmen"),
+    Region_Host_Richness = c(17,18,17,13)
+  )
+  
+  # merge richness info in to virus_list
+  virus_list = virus_list %>%
+    inner_join(pop_viral_richness, by=c("Site_Name", "Host_Order", "Host_Species")) %>%
+    inner_join(com_viral_richness, by="Site_Name") %>%
+    inner_join(com_host_richness, by="Site_Name")
+  
+  # virus tissue tropism
+  ttca = virus_list %>% select(10:14) %>% vegan::cca()
+  virus_list$TT_CA1 = ttca$CA$u[,1]
+  virus_list$TT_CA2 = ttca$CA$u[,2]
+  
+  # viral community composition within host population
+  tmp = virus_list %>% 
+    pivot_wider(names_from = Viral_Genus, values_from=Total_Abundance, values_fill=0) %>% 
+    select(Site_Name, Host_Species,21:ncol(.)) %>% 
+    group_by(Site_Name, Host_Species) %>% 
+    summarise_all(sum) %>%
+    ungroup()
+  vgca = tmp %>%
+    select(3:ncol(.)) %>%
+    vegan::cca()
+  virus_list = virus_list %>% inner_join(
+    tibble(
+      VG_CA1 = vgca$CA$u[,1],
+      VG_CA2 = vgca$CA$u[,2],
+      Site_Name = tmp$Site_Name,
+      Host_Species = tmp$Host_Species),
+    by = c("Site_Name", "Host_Species"))
+  
+  # transform strings into factors
+  virus_list = mutate_if(virus_list, is.character, as.factor)
+  
+  # return
+  virus_list
+}
+
+makeFullModelList = function(virus_list, virusFamPrecisionMat, hostOrdPrecisionMat) {
+  virusFamPrecisionMat = virusFamPrecisionMat %>%
+    `[`(unique(virus_list$Viral_Family), unique(virus_list$Viral_Family)) %>%
+    solve()
+  virusFamRank = virusFamPrecisionMat %>%
+    rankMatrix() %>%
+    as.vector()
+  hostOrdPrecisionMat = hostOrdPrecisionMat %>%
+    `[`(c("Insectivora", "Chiroptera", "Rodentia"), c("Insectivora", "Chiroptera", "Rodentia")) %>%
+    solve()
+  hostOrdRank = hostOrdPrecisionMat %>%
+    rankMatrix() %>%
+    as.vector()
+  
+  # the biological characteristics of virus
+  effect_viral_family = "s(Viral_Family, bs = 're', xt = list(S = list(virusFamPrecisionMat), rank = virusFamRank))"
+  effect_tissue_tropism_axis1 = "s(TT_CA1, bs = 'tp', k = 10)"
+  effect_tissue_tropism_axis2 = "s(TT_CA2, bs = 'tp', k = 10)"
+  effect_genome_type = "Genome_Type"
+  effect_zoonosis = "Zoonosis"
+  effect_novelty = "Novelty"
+  
+  # the ecological characteristics of virus
+  effect_com_viral_richness = "s(Region_Viral_Richness, bs = 'tp', k = 3)"
+  effect_pop_viral_richness = "s(Population_Viral_Richness, bs = 'tp', k = 9)"
+  effect_viral_com_genus_axis1 = "s(VG_CA1, bs = 'tp', k = 10)"
+  effect_viral_com_genus_axis2 = "s(VG_CA2, bs = 'tp', k = 10)"
+  
+  # the characteristics of host
+  effect_host_order = "s(Host_Order, bs = 're')"
+  effect_host_order_specific_viral_family = "s(Host_Order, Viral_Family, bs = 're')"
+  effect_host_order_phylogeny = "s(Host_Order, bs = 're', xt = list(S = list(hostOrdPrecisionMat), rank = hostOrdRank))"
+  effect_com_host_richness = "s(Region_Host_Richness, bs = 'tp', k = 3)"
+  
+  # model terms
+  Terms = list(
+    HostEffects = c(NA,
+                    effect_host_order,
+                    effect_host_order_specific_viral_family,
+                    effect_host_order_phylogeny),
+    TissueTropismEffects1 = c(NA, effect_tissue_tropism_axis1),
+    TissueTropismEffects2 = c(NA, effect_tissue_tropism_axis2),
+    CommunityCompositionEffects1 = c(NA, effect_viral_com_genus_axis1),
+    CommunityCompositionEffects2 = c(NA, effect_viral_com_genus_axis2),
+    ViralFamilyEffect = c(NA, effect_viral_family), 
+    GenomeTypeEffect = c(NA, effect_genome_type),
+    ZoonosisEffect = c(NA, effect_zoonosis),
+    NoveltyEffect = c(NA, effect_novelty),
+    
+    RegionalViralRichnessEffect = c(NA, effect_com_viral_richness),
+    PopulationViralRichnessEffect = c(NA, effect_pop_viral_richness),
+    HostRichnessEffect = c(NA, effect_com_host_richness)
+  )
+  
+  CompetingFullModels = expand.grid(Terms) %>% 
+    filter(!(HostEffects == "s(Host_Order, Viral_Family, bs = 're')" & is.na(ViralFamilyEffect))) %>%
+    apply(1, function(row) paste(na.omit(row), collapse = ' + ')) %>% 
+    data.frame(Formula = ., stringsAsFactors = F) %>% 
+    mutate(Formula = ifelse(nchar(Formula) == 0, '1', Formula),
+           Formula = paste('Multi_Host ~', Formula))
+  
+  # return
+  CompetingFullModels
+}
+
+fitModel = function(formula, data) {
+  fit = gam(
+    as.formula(formula),
+    data = data,
+    family = "binomial",
+    method = "REML",
+    select = FALSE
+  )
+  fit
+}
 
 calcHostAlphaDiversity = function(host_list, host_info, method=specnumber, nsample=1) {
   host_merged = inner_join(host_info, host_list, by = "Mammal_species")
@@ -159,6 +339,36 @@ performPERMANOVAVirusOp = function(virus_list) {
   
 }
 
+## rewrite needed
+virusOP = function() {
+  tmp_vir = tb_vir %>%
+    select(Viral_Family_Genus_Species, Host_Name, ends_with("_Abundance"), -Max_Abundance, -Total_Abundance)
+  
+  tmp_lib = tb_lib %>%
+    select(
+      site_name = Sampling_city,
+      host_species = `Host_species (No. of individual)`, 
+      reads = `norRNA_data (total_read_counts)`,
+      sample_type = Sample_type)
+  
+  tmp = str_split(tmp_lib$host_species, " ", simplify = TRUE)
+  sp_name = paste0(tmp_lib$site_name, " ", tmp[,1], " " ,tmp[,2])
+  tmp_lib$Host_Name = sp_name
+  tmp_vir = pivot_longer(tmp_vir, cols=3:7, names_to="sample_type", values_to = "Abundance")
+  tmp_vir$sample_type = str_split(tmp_vir$sample_type, "_", simplify = TRUE)[,1]
+  
+  tmp = inner_join(tmp_lib, tmp_vir, by=c("Host_Name","sample_type")) %>%
+    mutate(value = value*reads) %>%
+    group_by(site_name, Viral_Family_Genus_Species) %>%
+    summarise(value=sum(value), reads=sum(reads)) %>%
+    pivot_wider(names_from = Viral_Family_Genus_Species, values_from = value, values_fill=0)
+  
+  tmp_table = tmp %>%
+    ungroup() %>%
+    select(-all_of(c("site_name","reads"))) %>% 
+    round()
+}
+
 summariseVirusAnnotation = function(virus_list) {
   list(
     novelty = virus_list %>%
@@ -174,4 +384,61 @@ summariseVirusAnnotation = function(virus_list) {
       group_by(Zoonosis) %>%
       summarise(zoo = n())
   )
+}
+
+calcHostPhyloDist = function(host_tree, virus_list) {
+  host_phylo_dist_mat = cophenetic.phylo(host_tree)
+  
+  host_phylo_dist = host_phylo_dist_mat %>%
+    as.data.frame() %>%
+    mutate(A = rownames(.)) %>%
+    pivot_longer(cols=1:(ncol(.)-1), names_to="B")
+  
+  
+  sp = str_split(virus_list$Host_Name, " ", simplify = TRUE)
+  virus_list$Host_Species = paste0(sp[,2], "_", sp[,3])
+  x = filter(virus_list, Viral_Family_Genus_Species %in% lst) %>%
+    select(Viral_Family_Genus_Species, Host_Species)
+  
+  ret_mat = matrix(nrow=length(lst), ncol=6)
+  for (i in 1:length(lst)) {
+    tmp = filter(x, Viral_Family_Genus_Species == lst[i])$Host_Species
+    a = filter(host_phylo_dist, A %in% tmp & B %in% tmp, value > 0)$value %>% summary()
+    ret_mat[i,] = a
+  }
+  colnames(ret_mat) = names(a)
+  ret_tb = as_tibble(ret_mat) %>%
+    mutate(virus_species = lst)
+}
+
+plotVirusGenusComposition = function() {
+  ca = sub_vl %>% 
+    group_by(Site_Name, Host_Species, Multi_Host, Viral_Genus) %>% 
+    summarise(Total_Abundance = sum(Total_Abundance))  %>%
+    pivot_wider(names_from=Viral_Genus, values_from=Total_Abundance, values_fill=0) %>%
+    group_by(Site_Name, Host_Species) %>% 
+    summarise(across(4:ncol(.)-2, ~ sum(.x)), Multi_Host=max(Multi_Host)) %>%
+    ungroup() %>%
+    select(3:50) %>%
+    vegan::cca()
+  
+  k = sub_vl %>% 
+    group_by(Site_Name, Host_Species, Multi_Host, Viral_Genus) %>% 
+    summarise(Total_Abundance = sum(Total_Abundance))  %>%
+    pivot_wider(names_from=Viral_Genus, values_from=Total_Abundance, values_fill=0) %>%
+    group_by(Site_Name, Host_Species) %>% 
+    summarise(across(4:ncol(.)-2, ~ sum(.x)), Multi_Host=max(Multi_Host)) %>%
+    ungroup() 
+  
+  mm =c("rodents", "bats", "bats", "rodents", "bats", 
+        rep("rodents", 4), "bats", "bats", "rodents",
+        "bats", "bats", "rodents", "rodents", "shrews", 
+        "shrews", rep("rodents", 3), "bats", "bats")
+  
+  ggplot() +
+    geom_point(aes(x=x, y=y, color=as.factor(k$Multi_Host), shape=mm), size=3) +
+    ylim(c(-1,1.5)) +
+    xlab("CA Axis1 (11.62%)") + 
+    ylab("CA Axis (10.35%)") + 
+    theme_bw()
 }
