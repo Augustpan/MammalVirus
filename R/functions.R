@@ -6,6 +6,7 @@ library(ggConvexHull)
 library(UpSetR)
 library(ape)
 library(Matrix)
+library(mgcv)
 
 getPathToVirusList = function() { "data/mammal_virus_list.csv" }
 getPathToHostList = function() { "data/host_occurence.csv" }
@@ -181,10 +182,9 @@ makeFullModelList = function(virus_list, virusFamPrecisionMat, hostOrdPrecisionM
 
 fitModel = function(formula, data) {
   fit = gam(
-    as.formula(formula),
+    formula = as.formula(formula$Formula),
     data = data,
     family = "binomial",
-    method = "REML",
     select = FALSE
   )
   fit
@@ -457,6 +457,7 @@ calcHostPhyloDist = function(host_tree, virus_list) {
 }
 
 plotVirusGenusComposition = function() {
+  sub_vl = virus_list
   ca = sub_vl %>% 
     group_by(Site_Name, Host_Species, Multi_Host, Viral_Genus) %>% 
     summarise(Total_Abundance = sum(Total_Abundance))  %>%
@@ -465,6 +466,7 @@ plotVirusGenusComposition = function() {
     summarise(across(4:ncol(.)-2, ~ sum(.x)), Multi_Host=max(Multi_Host)) %>%
     ungroup() %>%
     select(3:50) %>%
+    `>`(0) %>%
     vegan::cca()
   
   k = sub_vl %>% 
@@ -479,9 +481,11 @@ plotVirusGenusComposition = function() {
         rep("rodents", 4), "bats", "bats", "rodents",
         "bats", "bats", "rodents", "rodents", "shrews", 
         "shrews", rep("rodents", 3), "bats", "bats")
-  
+  x = ca$CA$u[,1]
+  y = -ca$CA$u[,2]
   ggplot() +
-    geom_point(aes(x=x, y=y, color=as.factor(k$Multi_Host), shape=mm), size=3) +
+    #geom_point(aes(x=x, y=y, color=as.factor(k$Multi_Host), shape=mm), size=3) +
+    geom_segment(aes(x=rep(0, 48), y=rep(0, 48),xend=ca$CA$v[,1], yend=ca$CA$v[,2], color=f), arrow=arrow()) +
     ylim(c(-1,1.5)) +
     xlab("CA Axis1 (11.62%)") + 
     ylab("CA Axis (10.35%)") + 

@@ -1,7 +1,7 @@
 library(targets)
 source("R/functions.R")
 
-tar_option_set(debug="tree_host_ord")
+#tar_option_set(debug="tb_fitted_model")
 list(
   # manage path to raw data
   tar_target(file_virus_list, getPathToVirusList(), format = "file"),
@@ -33,7 +33,7 @@ list(
   tar_target(tb_virus_tab_sorted, sortVirusTableCA(tb_virus_list)),
   tar_target(list_virus_annotation, summariseVirusAnnotation(tb_virus_list)),
   tar_target(tb_full_model_list, makeFullModelList(tb_virus_list_clean, mat_virus_fam_pre_mat, mat_host_ord_pre_mat)),
-  #tar_target(tb_fitted_model, fitModel(tb_full_model_list, tb_virus_list_clean), pattern = map(tb_full_model_list)),
+  tar_target(tb_fitted_model, fitModel(tb_full_model_list, tb_virus_list_clean), pattern = map(tb_full_model_list)),
   #tar_target(tb_permanova_virus_op, performPERMANOVAVirusOp(tb_virus_list)),
   
   # create plots
