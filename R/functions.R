@@ -491,3 +491,36 @@ plotVirusGenusComposition = function() {
     ylab("CA Axis (10.35%)") + 
     theme_bw()
 }
+
+plot.rarefraction.curve = function(host_list) {
+  df_host_list = host_list %>%
+    as.data.frame()
+  rownames(df_host_list) = host_list$Mammal_species
+  df_host_list$Mammal_species = NULL
+  df_host_list = t(df_host_list)
+  max_samples = 1200
+  ret = matrix(nrow=max_samples, ncol=5)
+  for (n in 1:max_samples) {
+    samp = rarefy(df_host_list, sample=n)
+    ret[n,] = c(n, samp)
+  }
+  colnames(ret) = c("sample", names(samp))
+  
+  ret = as.data.frame(ret) %>%
+    pivot_longer(cols = 2:5, names_to="Site_Name", values_to="Species_Count") %>%
+    filter(
+      (Site_Name == "Longquan" & sample <= sum(host_list$Longquan)) | 
+      (Site_Name == "Wufeng" & sample <= sum(host_list$Wufeng)) | 
+      (Site_Name == "Wenzhou" & sample <= sum(host_list$Wenzhou)) | 
+      (Site_Name == "Jingmen" & sample <= sum(host_list$Jingmen)))
+  
+  ggplot(data=ret) +
+    geom_line(aes(x=sample, y=Species_Count, color=Site_Name)) + 
+    xlab("Sample Size") +
+    ylab("Species Count") +
+    theme_bw() + 
+    theme(axis.text = element_text(size=12),
+          axis.title.x = element_text(size=14),
+          axis.title.y = element_text(size=14))
+}
+
