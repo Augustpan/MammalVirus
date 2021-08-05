@@ -59,10 +59,6 @@ cleanVirusList = function(virus_list, virus_segment) {
   virus_list$Host_Order[f2] = "Chiroptera"
   virus_list$Host_Order[f3] = "Rodentia"
 
-  # drop viral Family that there is not enough replications
-  to_drop = c("Adenoviridae", "Anelloviridae", "Arteriviridae", "Circoviridae", "Matonaviridae")
-  virus_list = filter(virus_list, !(Viral_Family %in% to_drop))
-  
   # viral richness within host population
   pop_viral_richness = virus_list %>% count(Site_Name, Host_Order, Host_Species, name="Population_Viral_Richness")
   
@@ -108,13 +104,16 @@ cleanVirusList = function(virus_list, virus_segment) {
       Host_Species = tmp$Host_Species),
     by = c("Site_Name", "Host_Species"))
   
+  # drop viral Family that there is not enough replications
+  to_drop = c("Adenoviridae", "Anelloviridae", "Arteriviridae", "Circoviridae", "Matonaviridae")
+  #virus_list = filter(virus_list, !(Viral_Family %in% to_drop))
+  
   # transform strings into factors
   virus_list = mutate_if(virus_list, is.character, as.factor)
   
   # return
   virus_list
 }
-
 makeFullModelList = function(virus_list, virusFamPrecisionMat, hostOrdPrecisionMat) {
   virusFamPrecisionMat = virusFamPrecisionMat %>%
     `[`(unique(virus_list$Viral_Family), unique(virus_list$Viral_Family)) %>%
@@ -179,7 +178,6 @@ makeFullModelList = function(virus_list, virusFamPrecisionMat, hostOrdPrecisionM
   # return
   CompetingFullModels
 }
-
 fitModel = function(formula, data) {
   fit = gam(
     formula = as.formula(formula$Formula),
@@ -189,7 +187,6 @@ fitModel = function(formula, data) {
   )
   fit
 }
-
 seqDepthValidation = function() {
   seq_stat = tb_seq_stat
   virus_list = tb_virus_list_clean %>%
@@ -234,7 +231,7 @@ seqDepthValidation = function() {
       by = "Site_Name"
     )
 }
-
+## rewrite needed
 calcHostAlphaDiversity = function(host_list, host_info, method=specnumber, nsample=1) {
   host_merged = inner_join(host_info, host_list, by = "Mammal_species")
   host_comm = host_merged %>%
@@ -271,7 +268,6 @@ calcHostAlphaDiversity = function(host_list, host_info, method=specnumber, nsamp
   }
   bind_rows(lst_result)
 }
-
 sortVirusTableCA = function(virus_list) {
 
   tmp = virus_list %>%
@@ -293,7 +289,6 @@ sortVirusTableCA = function(virus_list) {
   dft[order(site_score),order(species_score)] %>%
     cbind(vtable$Host_Name[order(site_score)], vtable$Mammal[order(site_score)])
 }
-
 createPlotSharedHostSpecies = function(host_list, host_info) {
   host_merged = inner_join(host_info, host_list, by = "Mammal_species")
   host_merged = mutate(host_merged, SH=(Jingmen > 0) + (Longquan > 0) + (Wenzhou > 0) + (Wufeng > 0))
@@ -314,7 +309,6 @@ createPlotSharedHostSpecies = function(host_list, host_info) {
      geom_text(aes(x=x*15+15, y = 45, label=Mammal_species), data=SH, angle=45) + 
     coord_equal()
 }
-
 createPlotCAVirusOrganophilism = function(virus_list) {
   ca_op = virus_list %>%
     select(c("lung_Abundance",
@@ -367,7 +361,6 @@ createPlotCAVirusOrganophilism = function(virus_list) {
   upset(fromList(lst_op))
 
 }
-
 performPERMANOVAVirusOp = function(virus_list) {
   col_names = c("lung_Abundance",
                 "liver_Abundance",
@@ -383,7 +376,6 @@ performPERMANOVAVirusOp = function(virus_list) {
   adonis2(Y~organ, data=vtable, method="jaccard", permutations = perm)
   
 }
-
 ## rewrite needed
 virusOP = function() {
   tmp_vir = tb_vir %>%
@@ -413,7 +405,6 @@ virusOP = function() {
     select(-all_of(c("site_name","reads"))) %>% 
     round()
 }
-
 summariseVirusAnnotation = function(virus_list) {
   list(
     novelty = virus_list %>%
@@ -430,7 +421,6 @@ summariseVirusAnnotation = function(virus_list) {
       summarise(zoo = n())
   )
 }
-
 calcHostPhyloDist = function(host_tree, virus_list) {
   host_phylo_dist_mat = cophenetic.phylo(host_tree)
   
@@ -455,7 +445,6 @@ calcHostPhyloDist = function(host_tree, virus_list) {
   ret_tb = as_tibble(ret_mat) %>%
     mutate(virus_species = lst)
 }
-
 plotVirusGenusComposition = function() {
   sub_vl = virus_list
   ca = sub_vl %>% 
@@ -491,7 +480,6 @@ plotVirusGenusComposition = function() {
     ylab("CA Axis (10.35%)") + 
     theme_bw()
 }
-
 plot.rarefraction.curve = function(host_list) {
   df_host_list = host_list %>%
     as.data.frame()
@@ -524,3 +512,54 @@ plot.rarefraction.curve = function(host_list) {
           axis.title.y = element_text(size=14))
 }
 
+analyze.viral.richness = function(virus_list_clean) {
+  vl = virus_list_clean %>%
+    select(Site_Name, Host_Order, Host_Species, Population_Viral_Richness, Region_Viral_Richness) %>%
+    distinct() %>%
+    slice(-17, -19)
+  
+  # 第 17/19 行是离群值，去掉后正态性、方差齐性显著提高
+  # Line 17: Wufeng    Rodentia   Rattus_nitidus
+  # Line 19: Jingmen   Chiroptera Rhinolophus_sinicus
+  
+  lm(Population_Viral_Richness ~ Site_Name*Host_Order, data=vl) %>%
+    anova() %>%
+    broom::tidy() %>%
+    mutate(frac = sumsq/sum(sumsq))
+}
+
+analyze.viral.community.ca = function(virus_list_clean) {
+  ca = virus_list_clean %>% 
+    group_by(Site_Name, Host_Species, Multi_Host, Viral_Genus) %>% 
+    summarise(Total_Abundance = sum(Total_Abundance))  %>%
+    pivot_wider(names_from=Viral_Genus, values_from=Total_Abundance, values_fill=0) %>%
+    group_by(Site_Name, Host_Species) %>% 
+    summarise(across(4:ncol(.)-2, ~ sum(.x)), Multi_Host=max(Multi_Host)) %>%
+    ungroup() %>%
+    slice(-22) %>%
+    select(Alphacoronavirus:Tupavirus) %>%
+    `>`(0) %>%
+    vegan::cca()
+
+  mm =c("rodents", "bats", "bats", "rodents", "bats", 
+        rep("rodents", 4), "bats", "bats", "rodents",
+        "bats", "bats", "rodents", "rodents", "shrews", 
+        "shrews", rep("rodents", 3), "bats", "bats")[-22]
+  
+  x = ca$CA$u[,1]
+  y = ca$CA$u[,2]
+  ggplot() +
+    geom_point(aes(x=x, y=y, color=mm), size=3) +
+    geom_text(aes(x=x,y=y,label=1:22))
+  Y = virus_list_clean %>% 
+    group_by(Site_Name, Host_Species, Multi_Host, Viral_Genus) %>% 
+    summarise(Total_Abundance = sum(Total_Abundance))  %>%
+    pivot_wider(names_from=Viral_Genus, values_from=Total_Abundance, values_fill=0) %>%
+    group_by(Site_Name, Host_Species) %>% 
+    summarise(across(4:ncol(.)-2, ~ sum(.x)), Multi_Host=max(Multi_Host)) %>%
+    ungroup() %>%
+    slice(-22) %>%
+    select(Alphacoronavirus:Tupavirus) %>%
+    `>`(0)
+  adonis2(Y ~ mm, method = "jaccard", binary="T")
+}
