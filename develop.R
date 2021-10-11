@@ -23,8 +23,6 @@ tar_load("mat_host_ord_pre_mat")
     hostOrdRank = hostOrdPrecisionMat %>%
         rankMatrix() %>%
         as.vector()
-    
-
 }
 
 {
@@ -79,5 +77,70 @@ fit %>% dev_expl() - update(fit, . ~ . -s(Host_Order, bs = 're')) %>% dev_expl()
 
 x = predict(fit, terms="s(Viral_Family)", se.fit = TRUE, type="iterms")
 tibble(effect_size = x$fit, se = x$se.fit, term = fit$model$Viral_Family) %>% distinct()
+
+df = read_csv("data/host_occurence.csv")
+meta = read_csv("data/host_metadata.csv")
+mf = read_csv("data/Mammal_family.csv")
+
+ndf = df %>% 
+    left_join(meta) %>%
+    left_join(mf)
+ca = cca(ndf[,2:5])
+sp_score = ca$CA$u[,1]
+st_score = ca$CA$v[,1]
+
+sp_ord = order(sp_score)
+st_ord = order(st_score)
+
+x = cbind(
+    select(ndf, Mammal, Mammal_family, Mammal_genus, Mammal_species)[sp_ord,],
+    ndf[,2:5][sp_ord, st_ord]
+)
+
+
+vir = read_tsv("data/VIR.tsv")
+vcf = read_csv("variant_calls.csv")
+df = filter(vcf, grepl(vir$VIR[1], VIR))
+
+
+x = tb_virus_list %>%
+    select(Host_Name, Virus_Name, Total_Abundance) %>%
+    pivot_wider(names_from=Virus_Name, values_from=Total_Abundance, values_fill=0) %>%
+    mutate(across(2:ncol(.), ~ as.integer(.x > 0))) %>%
+    as.data.frame()
+rownames(x) = x$Host_Name
+x$Host_Name = NULL
+
+tmp = str_replace(colnames(x), "\\(.+\\)", "")
+
+colnames(x) = str_split(tmp, "\\s", simplify = T) %>% 
+    plyr::aaply(1, function(x){paste(x, collapse ="_")}) %>%
+    str_replace("_{2,}", "") %>%
+    str_to_lower() %>%
+    str_replace("_&.+", "")
+
+for (tree_file in list.files("data/virus_tree")[-4]) {
+    #tree_file = "data/virus_tree/5_my_Rhabdo_L_protein_alin PhyML Tree.nwk"
+    print(tree_file)
+    tre = phyloseq::read_tree(paste0("data/virus_tree/", tree_file))
+    tre$tip.label = tre$tip.label %>%
+        str_replace("_partial", "") %>%
+        str_replace("_complete_genome", "") %>%
+        str_replace("Niviventer_coninga", "Leopoldamys_edwardsi") %>%
+        str_to_lower() %>%
+        str_replace("jingshan", "jingmen")
+    unk = setdiff(tre$tip.label, colnames(x))
+    xs = select(x, all_of(intersect(colnames(x), tre$tip.label))) %>%
+        filter(rowSums(.)>0)
+    
+    ot = otu_table(xs, taxa_are_rows = F)
+    ps = phyloseq(ot, tre)
+    dst = UniFrac(ps, normalized = T) %>%
+        as.matrix() %>%
+        as.data.frame() %>%
+        mutate(s1 = rownames(.)) %>%
+        pivot_longer(cols=1:ncol(.)-1, names_to="s2", values_to="uw_unifrac") %>%
+        mutate(uw_unifrac = uw_unifrac * length(tre$edge))
+}
 
 

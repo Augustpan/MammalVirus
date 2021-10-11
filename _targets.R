@@ -1,18 +1,18 @@
 library(targets)
 source("R/functions.R")
 
-#tar_option_set(debug="tb_fitted_model")
+#tar_option_set(debug="tb_virus_list_clean")
 list(
   # manage path to raw data
-  tar_target(file_virus_list, getPathToVirusList(), format = "file"),
-  tar_target(file_host_list, getPathToHostList(), format = "file"),
-  tar_target(file_host_info, getPathToHostInfo(), format = "file"),
-  tar_target(file_host_spe_tree, getPathToHostSpeciesTree(), format = "file"),
-  tar_target(file_host_ord_tree, getPathToHostOrderTree(), format = "file"),
-  tar_target(file_virus_segment, getPathToVirusSegment(), format = "file"),
-  tar_target(file_virus_fam_pre_mat, getPathToVirusFamPreMat(), format = "file"),
-  tar_target(file_host_ord_pre_mat, getPathToHostOrdPreMat(), format = "file"),
-  tar_target(file_seq_stat, getPathToSeqStat(), format = "file"),
+  tar_target(file_virus_list, getPathVirusList(), format = "file"),
+  tar_target(file_host_list, getPathHostList(), format = "file"),
+  tar_target(file_host_info, getPathHostInfo(), format = "file"),
+  tar_target(file_host_spe_tree, getPathHostSpeciesTree(), format = "file"),
+  tar_target(file_host_ord_tree, getPathHostOrderTree(), format = "file"),
+  tar_target(file_virus_segment, getPathVirusSegment(), format = "file"),
+  tar_target(file_virus_fam_pre_mat, getPathVirusFamPreMat(), format = "file"),
+  tar_target(file_host_ord_pre_mat, getPathHostOrdPreMat(), format = "file"),
+  tar_target(file_seq_stat, getPathSeqStat(), format = "file"),
   
   # read raw data
   tar_target(tb_virus_list, read_csv(file_virus_list, show_col_types = FALSE)),
@@ -33,7 +33,7 @@ list(
   tar_target(tb_virus_tab_sorted, sortVirusTableCA(tb_virus_list)),
   tar_target(list_virus_annotation, summariseVirusAnnotation(tb_virus_list)),
   tar_target(tb_full_model_list, makeFullModelList(tb_virus_list_clean, mat_virus_fam_pre_mat, mat_host_ord_pre_mat)),
-  tar_target(tb_fitted_model, fitModel(tb_full_model_list, tb_virus_list_clean), pattern = map(tb_full_model_list)),
+  #tar_target(tb_fitted_model, fitModel(tb_full_model_list, tb_virus_list_clean), pattern = map(tb_full_model_list)),
   #tar_target(tb_permanova_virus_op, performPERMANOVAVirusOp(tb_virus_list)),
   
   # create plots
@@ -41,3 +41,4 @@ list(
   tar_target(gg_virus_op_ca, createPlotCAVirusOrganophilism(tb_virus_list))
   
 )
+

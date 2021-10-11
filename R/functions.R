@@ -8,15 +8,15 @@ library(ape)
 library(Matrix)
 library(mgcv)
 
-getPathToVirusList = function() { "data/mammal_virus_list.csv" }
-getPathToHostList = function() { "data/host_occurence.csv" }
-getPathToHostInfo = function() { "data/host_metadata.csv" }
-getPathToHostSpeciesTree = function() { "data/host_phylo_tree.nwk" }
-getPathToHostOrderTree = function() { "data/host_order.nwk" }
-getPathToVirusSegment = function() { "data/segment.tsv" }
-getPathToVirusFamPreMat = function() { "data/virusFamPrecisionMat.rds" }
-getPathToHostOrdPreMat = function() { "data/hostOrdPrecisionMat.rds" }
-getPathToSeqStat = function() { "data/lib_seq_stat.csv" }
+getPathVirusList = function() { "data/mammal_virus_list.csv" }
+getPathHostList = function() { "data/host_occurence.csv" }
+getPathHostInfo = function() { "data/host_metadata.csv" }
+getPathHostSpeciesTree = function() { "data/host_phylo_tree.nwk" }
+getPathHostOrderTree = function() { "data/host_order.nwk" }
+getPathVirusSegment = function() { "data/segment.tsv" }
+getPathVirusFamPreMat = function() { "data/virusFamPrecisionMat.rds" }
+getPathHostOrdPreMat = function() { "data/hostOrdPrecisionMat.rds" }
+getPathSeqStat = function() { "data/lib_seq_stat.csv" }
 
 cleanVirusList = function(virus_list, virus_segment) {
   sp = str_split(virus_list$Host_Name, " ", simplify = TRUE)
@@ -39,7 +39,7 @@ cleanVirusList = function(virus_list, virus_segment) {
     select(
       Site_Name, 
       Viral_Family, Viral_Genus, Virus_Species, 
-      Host_Order=Mammal, Host_Species,
+      Mammal, Host_Order=Mammal, Host_Species,
       Genome_Type = Genome_type,
       Novelty, Zoonosis,
       Lung_Abundance = lung_Abundance,
@@ -52,13 +52,12 @@ cleanVirusList = function(virus_list, virus_segment) {
     mutate(Multi_Host = Virus_Species %in% multi_host_virus)
   
   # rename Order of host species
-  f1 = virus_list$Host_Order == "shrews"
-  f2 = virus_list$Host_Order == "bats"
-  f3 = virus_list$Host_Order == "rodents"
-  virus_list$Host_Order[f1] = "Insectivora"
-  virus_list$Host_Order[f2] = "Chiroptera"
-  virus_list$Host_Order[f3] = "Rodentia"
-
+  virus_list$Host_Order = plyr::aaply(
+    virus_list$Host_Order, 1, 
+    function(x) {
+      switch(x, shrews="Insectivora", bats="Chiroptera", rodents="Rodentia")
+      })
+  
   # viral richness within host population
   pop_viral_richness = virus_list %>% count(Site_Name, Host_Order, Host_Species, name="Population_Viral_Richness")
   
@@ -93,9 +92,11 @@ cleanVirusList = function(virus_list, virus_segment) {
     group_by(Site_Name, Host_Species) %>% 
     summarise_all(sum) %>%
     ungroup()
+  
   vgca = tmp %>%
     select(3:ncol(.)) %>%
     vegan::cca()
+  
   virus_list = virus_list %>% inner_join(
     tibble(
       VG_CA1 = vgca$CA$u[,1],
@@ -114,6 +115,7 @@ cleanVirusList = function(virus_list, virus_segment) {
   # return
   virus_list
 }
+
 makeFullModelList = function(virus_list, virusFamPrecisionMat, hostOrdPrecisionMat) {
   virusFamPrecisionMat = virusFamPrecisionMat %>%
     `[`(unique(virus_list$Viral_Family), unique(virus_list$Viral_Family)) %>%
@@ -178,6 +180,7 @@ makeFullModelList = function(virus_list, virusFamPrecisionMat, hostOrdPrecisionM
   # return
   CompetingFullModels
 }
+
 fitModel = function(formula, data) {
   fit = gam(
     formula = as.formula(formula$Formula),
@@ -187,9 +190,9 @@ fitModel = function(formula, data) {
   )
   fit
 }
-seqDepthValidation = function() {
-  seq_stat = tb_seq_stat
-  virus_list = tb_virus_list_clean %>%
+
+seqDepthValidation = function(virus_list_clean, seq_stat) {
+  virus_list = virus_list_clean %>%
     pivot_longer(
       cols=Lung_Abundance:Spleen_Abundance, 
       names_to="Sample_type", 
@@ -203,17 +206,32 @@ seqDepthValidation = function() {
   seq_stat$Host_Species = paste0(sp[,1], "_", sp[,2])
   
   full_list = inner_join(virus_list, seq_stat, by=c("Host_Species", "Site_Name"="Sampling_city", "Sample_type"))
-  
   full_list$reads = round(full_list$Abundance * full_list$`norRNA_data (total_read_counts)`)
   
   pool = full_list %>%
     select(Site_Name, Host_Species, Sample_Type=Sample_type, Virus_Species, Reads=reads) %>%
     pivot_wider(names_from=Virus_Species, values_from=Reads, values_fill=0)
   
-  host = pool %>%select(-Sample_Type) %>%group_by(Site_Name, Host_Species) %>% summarise_all(sum) %>% ungroup()
-  site = host %>%select(-Host_Species) %>% group_by(Site_Name) %>% summarise_all(sum) %>% as.data.frame()
+  host = pool %>%
+    select(-Sample_Type) %>%
+    group_by(Site_Name, Host_Species) %>% 
+    summarise_all(sum) %>% 
+    ungroup()
   
-  rownames(site) = site$Site_Name
+  site = host %>%
+    select(-Host_Species) %>% 
+    group_by(Site_Name) %>% 
+    summarise_all(sum) %>% 
+    ungroup()
+  
+  max_depth = max(rowSums(pool[,4:ncol(pool)]))
+  rare_pool = matrix(nrow=max_depth, ncol=nrow(pool))
+  for (nsample in 1:max_depth) {
+    rare_pool[nsample,] = rarefy(pool[,4:ncol(pool)], nsample)
+  }
+  
+  rarefy(host[,3:ncol(host)], nsample)
+  rarefy(site[,2:ncol(site)], nsample)
   
   df = virus_list %>% 
     group_by(Site_Name, Host_Species, Virus_Species, Multi_Host) %>%
@@ -473,8 +491,8 @@ plotVirusGenusComposition = function() {
   x = ca$CA$u[,1]
   y = -ca$CA$u[,2]
   ggplot() +
-    #geom_point(aes(x=x, y=y, color=as.factor(k$Multi_Host), shape=mm), size=3) +
-    geom_segment(aes(x=rep(0, 48), y=rep(0, 48),xend=ca$CA$v[,1], yend=ca$CA$v[,2], color=f), arrow=arrow()) +
+    geom_point(aes(x=x, y=y, color=as.factor(k$Multi_Host), shape=mm), size=3) +
+    #geom_segment(aes(x=rep(0, 48), y=rep(0, 48),xend=ca$CA$v[,1], yend=ca$CA$v[,2], color=f), arrow=arrow()) +
     ylim(c(-1,1.5)) +
     xlab("CA Axis1 (11.62%)") + 
     ylab("CA Axis (10.35%)") + 
@@ -486,11 +504,11 @@ plot.rarefraction.curve = function(host_list) {
   rownames(df_host_list) = host_list$Mammal_species
   df_host_list$Mammal_species = NULL
   df_host_list = t(df_host_list)
-  max_samples = 1200
-  ret = matrix(nrow=max_samples, ncol=5)
+  max_samples = 1225
+  ret = matrix(nrow=max_samples, ncol=3)
   for (n in 1:max_samples) {
-    samp = rarefy(df_host_list, sample=n)
-    ret[n,] = c(n, samp)
+    samp = rarefy(df_host_list, sample=n, se=T)
+    ret[n,] = c(n, samp[1], samp[2])
   }
   colnames(ret) = c("sample", names(samp))
   
@@ -549,7 +567,14 @@ analyze.viral.community.ca = function(virus_list_clean) {
   x = ca$CA$u[,1]
   y = ca$CA$u[,2]
   ggplot() +
-    geom_point(aes(x=x, y=y, color=mm), size=3) +
+    geom_point(aes(x=x, y=y, color=mm, shape=ss), size=3) +
+    xlab("CA Axis1 (12.39%)") +
+    ylab("CA Axis2 (9.94%)") +
+    theme(axis.title = element_text(size=12, family = "bold"), axis.text = element_text(size=12)) +
+    theme_bw() + 
+    scale_shape_manual(
+      values = c(15,16,17,18)
+    )
     geom_text(aes(x=x,y=y,label=1:22))
   Y = virus_list_clean %>% 
     group_by(Site_Name, Host_Species, Multi_Host, Viral_Genus) %>% 
@@ -561,5 +586,37 @@ analyze.viral.community.ca = function(virus_list_clean) {
     slice(-22) %>%
     select(Alphacoronavirus:Tupavirus) %>%
     `>`(0)
-  adonis2(Y ~ mm, method = "jaccard", binary="T")
+  adonis2(Y ~ mm*ss, method = "jaccard", binary="T")
+}
+
+mergeAllDataFrames = function(host_list, host_info, virus_list, seq_stat) {
+  inner_join(host_list, host_info, by="Mammal_species")
+  select(seq_stat, Pool_name, ) 
+  
+  n_virus_list = virus_list_clean %>%
+    pivot_longer(
+      cols=Lung_Abundance:Spleen_Abundance, 
+      names_to="Sample_type", 
+      values_to = "Abundance") %>%
+    mutate(Sample_type = str_split(Sample_type, "_", simplify = TRUE)[,1] %>% str_to_lower())
+  
+  sp = seq_stat %>%
+    `$`(`Host_species (No. of individual)`) %>%
+    str_split(" ", simplify = TRUE)
+  
+  seq_stat$Host_Species = paste0(sp[,1], "_", sp[,2])
+  
+  full_list = inner_join(n_virus_list, seq_stat, by=c("Host_Species", "Site_Name"="Sampling_city", "Sample_type"))
+  full_list$reads = round(full_list$Abundance * full_list$`norRNA_data (total_read_counts)`)
+}
+
+reroot_phytree = function(root_dir) {
+  fnames = list.files("/Users/aug/Desktop/virus_tree")
+  full_fnames = paste0("/Users/aug/Desktop/virus_tree/", fnames)
+  for (fname in full_fnames) {
+    print(fname)
+    ape::read.tree(fname) %>%
+      phytools::midpoint.root() %>%
+      write.tree(paste0(fname, ".new"))
+  }
 }
